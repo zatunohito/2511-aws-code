@@ -8,7 +8,7 @@ export const handler = async (event) => {
   const index_number = body.indexvalue;
   const index = body.index;
   // inputTextまだまだ修正する必要あり
-  const inputText = `use data:\n index_value: ${index_number}\n index: ${index}\n Please check the index and rate the following items (25 points each).\n- Depth of study (higher scores for more detailed and in-depth study)\n- Expertise (higher scores for more technical engineering content)\n- Redundancy (low scores for unnecessarily long sentences used to fill word count)\n- Logic (high scores for easy-to-read sentences)\nThe output format is "{total score}".`
+  const inputText = `use data:\n index_value(Amount of text): ${index_number}\n index(Content): ${index}\n Please check the index and rate the following items (25 points each).\n- Depth of study (higher scores for more detailed and in-depth study)\n- Expertise (higher scores for more technical engineering content)\n- Redundancy (low scores for unnecessarily long sentences used to fill word count)\n- Logic (high scores for easy-to-read sentences)\nConsidering a standard score of 30 points\nThe total score should be output as "TotalScoreIs {totalpoint}.".`
   const message = {
       content: [{ text: inputText }],
       role: ConversationRole.USER
