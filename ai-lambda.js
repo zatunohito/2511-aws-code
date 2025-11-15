@@ -8,7 +8,7 @@ export const handler = async (event) => {
   const index_number = body.indexvalue;
   const index = body.index;
   // inputTextまだまだ修正する必要あり
-  const inputText = `use data:\n index_value: ${index_number}\n index: ${index}\n`
+  const inputText = `use data:\n index_value: ${index_number}\n index: ${index}\n Please check the index and rate the following items (25 points each).\n- Depth of study (higher scores for more detailed and in-depth study)\n- Expertise (higher scores for more technical engineering content)\n- Redundancy (low scores for unnecessarily long sentences used to fill word count)\n- Logic (high scores for easy-to-read sentences)\nThe output format is "{total score}".`
   const message = {
       content: [{ text: inputText }],
       role: ConversationRole.USER
@@ -21,4 +21,25 @@ export const handler = async (event) => {
        temperature: 0.5,
      }
    }
+
+
+   try {
+    const response = await client.send(new ConverseCommand(request));
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(response)
+    }
+  } catch (err) {
+    console.error(`ERROR: Can't invoke '${modelId}'. Reason: ${error.message}`);
+    return {
+      statusCode: 500,
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(err)
+    }
+  }
 }
