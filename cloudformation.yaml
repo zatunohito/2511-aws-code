@@ -1,5 +1,6 @@
 Transform: AWS::Serverless-2016-10-31
 Resources:
+  # 既存のREST API用Lambda関数
   Function:
     Type: AWS::Serverless::Function
     Properties:
@@ -20,11 +21,13 @@ Resources:
             Method: POST
             RestApiId: !Ref Api
       Role: !GetAtt FunctionRole.Arn
+
   FunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
     Properties:
       LogGroupName: !Sub /aws/lambda/${Function}
+
   Api:
     Type: AWS::Serverless::Api
     Properties:
@@ -47,6 +50,7 @@ Resources:
       TracingEnabled: true
       Cors:
         MaxAge: 5
+
   FunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -71,3 +75,285 @@ Resources:
                 Resource:
                   - arn:aws:bedrock:*::foundation-model/*
                   - arn:aws:bedrock:*:*:inference-profile/*
+
+  # WebSocket用DynamoDBテーブル
+  WebSocketConnectionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: 2511-TellLate-ws-connection
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  # WebSocket API
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: 2511-TellLate-WebSocket-API
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+
+  WebSocketApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: Prod
+      AutoDeploy: true
+
+  # Lambda関数: $connect
+  WsConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: 2511-TellLate-ws-connect
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 128
+      Role: arn:aws:iam::431343616414:role/SimpleWebSocket
+      InlineCode: |
+        const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+        const { DynamoDBDocumentClient, PutCommand } = require("@aws-sdk/lib-dynamodb");
+
+        const client = new DynamoDBClient({});
+        const docClient = DynamoDBDocumentClient.from(client);
+        const tableName = "2511-TellLate-ws-connection";
+
+        exports.handler = async (event) => {
+          const connectionId = event.requestContext.connectionId
+
+          console.log("connectionId: ", connectionId)
+          try {
+            const command = {
+              TableName: tableName,
+              Item: {
+                connectionId: connectionId,
+                connectedAt: new Date().toISOString()
+              },
+            }
+            const response = await docClient.send(new PutCommand(command));
+
+            return {
+              statusCode: 200,
+              body: JSON.stringify(response)
+            }
+
+          } catch(error) {
+            console.log("error: ", error)
+            return {
+              statusCode: 500,
+              body: JSON.stringify({ message: "Failed to Connect"})
+            }
+          };
+        }
+
+  WsConnectFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${WsConnectFunction}
+
+  # Lambda関数: $default
+  WsDefaultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: 2511-TellLate-ws-default
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 128
+      Role: arn:aws:iam::431343616414:role/SimpleWebSocket
+      InlineCode: |
+        const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+        const { DynamoDBDocumentClient, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+        const { ApiGatewayManagementApiClient, PostToConnectionCommand } = require("@aws-sdk/client-apigatewaymanagementapi");
+
+        const client = new DynamoDBClient({});
+        const docClient = DynamoDBDocumentClient.from(client);
+
+        const tableName = "2511-TellLate-ws-connection"
+
+        exports.handler = async (event) => {
+          const senderConnectionId = event.requestContext.connectionId;
+
+          const domain = event.requestContext.domainName;
+          const stage = event.requestContext.stage;
+          const endpoint = `https://${domain}/${stage}`;
+
+          try {
+            const body = JSON.parse(event.body);
+            const title = body.title;
+            const content = body.content;
+            const snippetScore = body.snippetScore;
+            const apiGwClient = new ApiGatewayManagementApiClient({
+              endpoint
+            });
+
+            const scanCommand = new ScanCommand({
+              TableName: tableName
+            });
+
+            const scanResult = await docClient.send(scanCommand);
+
+            const postPromises = scanResult.Items
+              .filter(({ connectionId }) => connectionId !== senderConnectionId)
+              .map(async ({ connectionId: connectionId }) => {
+                try {
+                  await apiGwClient.send(
+                    new PostToConnectionCommand({
+                      ConnectionId: connectionId,
+                      Data: JSON.stringify({
+                        title,
+                        content,
+                        snippetScore
+                      })
+                    })
+                  )
+                } catch (error) {
+                  console.log(error);
+                }
+              });
+
+            await Promise.all(postPromises);
+
+          } catch (error) {
+            console.log(error);
+            return { statusCode: 500, body: "Error occurred." };
+          }
+
+          return { statusCode: 200, body: "Message sent." };
+        };
+
+  WsDefaultFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${WsDefaultFunction}
+
+  # Lambda関数: $disconnect
+  WsDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: 2511-TellLate-ws-disconnect
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 128
+      Role: arn:aws:iam::431343616414:role/SimpleWebSocket
+      InlineCode: |
+        const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+        const { DynamoDBDocumentClient, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+
+        const tableName = "2511-TellLate-ws-connection"
+
+        exports.handler = async (event) => {
+          const client = new DynamoDBClient({});
+          const docClient = DynamoDBDocumentClient.from(client);
+          const connectionId = event.requestContext.connectionId;
+          try {
+            const command = new DeleteCommand({
+              TableName: tableName,
+              Key: {
+                connectionId: connectionId
+              }
+            });
+            const response = await docClient.send(command)
+
+            return {
+              statusCode: 200,
+              body: JSON.stringify(response)
+            };
+          } catch (error) {
+            console.error(error);
+            return {
+              statusCode: 500,
+              body: JSON.stringify(error)
+            };
+          }
+        };
+
+  WsDisconnectFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${WsDisconnectFunction}
+
+  # Lambda実行権限
+  WsConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WsConnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  WsDefaultPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WsDefaultFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  WsDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WsDisconnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  # WebSocketルート
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      Target: !Sub integrations/${ConnectIntegration}
+
+  ConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsConnectFunction.Arn}/invocations
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $default
+      Target: !Sub integrations/${DefaultIntegration}
+
+  DefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsDefaultFunction.Arn}/invocations
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      Target: !Sub integrations/${DisconnectIntegration}
+
+  DisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsDisconnectFunction.Arn}/invocations
+
+Outputs:
+  ApiEndpoint:
+    Description: REST API endpoint URL
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/Prod/
+  
+  WebSocketApiEndpoint:
+    Description: WebSocket API endpoint URL
+    Value: !Sub wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${WebSocketApiStage}
