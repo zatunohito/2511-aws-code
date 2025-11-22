@@ -217,7 +217,13 @@ Resources:
             return { statusCode: 500, body: "Error occurred." };
           }
 
-          return { statusCode: 200, body: "Message sent." };
+          return { 
+            statusCode: 200, 
+            body: JSON.stringify({
+                type: 'send_confirmation',
+                message: 'Message sent successfully'
+            })
+          };
         };
 
   WsDefaultFunctionLogGroup:
