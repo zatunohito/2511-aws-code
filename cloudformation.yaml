@@ -49,6 +49,9 @@ Resources:
       EndpointConfiguration: REGIONAL
       TracingEnabled: true
       Cors:
+        AllowOrigin: "'*'" # '*' を文字列として渡すため、シングルクォートで囲む
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowMethods: "'POST,OPTIONS'"
         MaxAge: 5
 
   FunctionRole:
@@ -353,7 +356,7 @@ Outputs:
   ApiEndpoint:
     Description: REST API endpoint URL
     Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/Prod/
-  
+
   WebSocketApiEndpoint:
     Description: WebSocket API endpoint URL
     Value: !Sub wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${WebSocketApiStage}
