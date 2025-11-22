@@ -35,21 +35,11 @@ Resources:
         - ${ResourceName} From Stack ${AWS::StackName}
         - ResourceName: Api
       StageName: Prod
-      DefinitionBody:
-        openapi: "3.0"
-        info: {}
-        paths:
-          /:
-            post:
-              x-amazon-apigateway-integration:
-                httpMethod: POST
-                type: aws_proxy
-                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Function.Arn}/invocations
-              responses: {}
+      # DefinitionBody: を削除する
       EndpointConfiguration: REGIONAL
       TracingEnabled: true
       Cors:
-        AllowOrigin: "'*'" # '*' を文字列として渡すため、シングルクォートで囲む
+        AllowOrigin: "'*'"
         AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
         AllowMethods: "'POST,OPTIONS'"
         MaxAge: 5
